@@ -13,7 +13,6 @@ import random
 from pydicom import dcmread
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
-import argparse
 import os
 
 class Nodes:
@@ -25,23 +24,25 @@ class Nodes:
         self.parent_y = []
 
 # check collision
-def collision(x1,y1,x2,y2):
+def collision(x1,y1,x2,y2,img):
     color=[]
     x = list(np.arange(x1,x2,(x2-x1)/100))
     y = list(((y2-y1)/(x2-x1))*(x-x1) + y1)
+
+    obstacleThreshold = 180
     print("collision",x,y)
     for i in range(len(x)):
-        print(int(x[i]),int(y[i]))
+        # print(int(x[i]),int(y[i]))
         color.append(img[int(y[i]),int(x[i])])
-    if (0 in color):
-        return True #collision
-    else:
-        return False #no-collision
+
+        if img[int(y[i]),int(x[i])] < obstacleThreshold:
+            return True
+    return False
 
 # check the  collision with obstacle and trim
-def check_collision(x1,y1,x2,y2):
+def check_collision(x1,y1,x2,y2, img, stepSize):
     _,theta = dist_and_angle(x2,y2,x1,y1)
-    x=x2 + stepSize*np.cos(theta)
+    x=x2 + stepSize*np.cos(theta) 
     y=y2 + stepSize*np.sin(theta)
     print(x2,y2,x1,y1)
     print("theta",theta)
@@ -56,13 +57,13 @@ def check_collision(x1,y1,x2,y2):
         nodeCon = False
     else:
         # check direct connection
-        if collision(x,y,end[0],end[1]):
+        if collision(x,y,end[0],end[1], img):
             directCon = False
         else:
             directCon=True
 
         # check connection between two nodes
-        if collision(x,y,x2,y2):
+        if collision(x,y,x2,y2, img):
             nodeCon = False
         else:
             nodeCon = True
@@ -117,7 +118,7 @@ def RRT(img, img2, start, end, stepSize):
         print("Nearest node coordinates:",nearest_x,nearest_y)
 
         #check direct connection
-        tx,ty,directCon,nodeCon = check_collision(nx,ny,nearest_x,nearest_y)
+        tx,ty,directCon,nodeCon = check_collision(nx,ny,nearest_x,nearest_y, imgInvert, stepSize)
         print("Check collision:",tx,ty,directCon,nodeCon)
 
         if directCon and nodeCon:
@@ -170,7 +171,7 @@ def selectPoints(event, x, y, flags, param):
     global points
     if event == cv2.EVENT_LBUTTONDBLCLK:
         if len(points) < 2:
-            cv2.circle(imgColor, (x, y), 5, (0, 0, 255), -1)
+            cv2.circle(imgColor, (x, y), 3, (0, 0, 255), -1)
             points.append((x, y))
 
 if __name__ == '__main__':
@@ -193,28 +194,8 @@ if __name__ == '__main__':
             break
 
     print("Selected points:", points)
-    
-
-    # img = cv2.imread(args.imagePath,0) # load grayscale maze image
-    # img2 = cv2.imread(args.imagePath) # load colored maze image
-    # start = tuple(args.start) #(20,20) # starting coordinate
-    # end = tuple(args.stop) #(450,250) # target coordinate
-    # stepSize = args.stepSize # stepsize for RRT
-    # node_list = [0] # list to store all the node points
-
-    # coordinates=[]
-    # if args.selectPoint:
-    #     print("Select start and end points by double clicking, press 'escape' to exit")
-    #     cv2.namedWindow('image')
-    #     cv2.setMouseCallback('image',draw_circle)
-    #     while(1):
-    #         cv2.imshow('image',img2)
-    #         k = cv2.waitKey(20) & 0xFF
-    #         if k == 27:
-    #             break
-    #     # print(coordinates)
-    #     start=(coordinates[0],coordinates[1])
-    #     end=(coordinates[2],coordinates[3])
-
-    # # run the RRT algorithm 
-    # RRT(img, img2, start, end, stepSize)
+    start = [points[0][0], points[0][1]]
+    end = [points[1][0], points[1][1]]
+    stepSize = 10
+    node_list = [0]
+    RRT(imgInvert, imgColor, start, end, stepSize)
