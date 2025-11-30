@@ -103,8 +103,8 @@ def RRT(img, img2, start, end, stepSize):
     node_list[0].parent_y.append(start[1])
 
     # display start and end
-    cv2.circle(img2, (start[0],start[1]), 5,(0,0,255),thickness=3, lineType=8)
-    cv2.circle(img2, (end[0],end[1]), 5,(0,0,255),thickness=3, lineType=8)
+    cv2.circle(img2, (start[0],start[1]), 3,(0,0,255),thickness=3, lineType=8)
+    cv2.circle(img2, (end[0],end[1]), 3,(0,0,255),thickness=3, lineType=8)
 
     i=1
     pathFound = False

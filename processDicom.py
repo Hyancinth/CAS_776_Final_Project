@@ -15,3 +15,7 @@ convertedArr = cv2.normalize(arr, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8
 imgGray = convertedArr
 imgInvert = cv2.bitwise_not(imgGray) # inverted gray scale
 imgColor = cv2.cvtColor(imgInvert, cv2.COLOR_GRAY2BGR) # color image
+
+plt.imshow(imgColor)
+plt.title('Dicom Image')
+plt.show()
