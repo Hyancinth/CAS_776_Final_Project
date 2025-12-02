@@ -1,6 +1,6 @@
 """
 Originally from https://github.com/nimRobotics/RRT/blob/master/rrt.py
-modified by: Ethan
+modified by: Ethan and Marko
 """
 
 import cv2
@@ -12,6 +12,14 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import time
+import vedo
+from generate3D import generate3DArray, generateSTL
+
+# Needed to increase recursion limit for large RRTs
+# import sys
+# sys.setrecursionlimit(10000)
+
 
 class Nodes:
     """Class to store the RRT graph"""
@@ -25,7 +33,7 @@ class Nodes:
 
 def collision(x1, y1, z1, x2, y2, z2, img):
     
-    obstacleThreshold = 180
+    obstacleThreshold = 230
     numSamples = 100
 
     t = np.linspace(0, 1, numSamples) # denotes a line from point 1 to point 2 
@@ -35,7 +43,7 @@ def collision(x1, y1, z1, x2, y2, z2, img):
     y = y1 + t * (y2 - y1)
     z = z1 + t * (z2 - z1)
     
-    hz, hy, hx = img.shape 
+    hx, hy, hz = img.shape 
     
     for i in range(numSamples): 
         xi, yi, zi = int(x[i]), int(y[i]), int(z[i])
@@ -47,7 +55,7 @@ def collision(x1, y1, z1, x2, y2, z2, img):
             return True
         
         # obstacle check
-        if img[zi, yi, xi] > obstacleThreshold:
+        if img[xi, yi, zi] < obstacleThreshold:
             return True
         
     return False
@@ -67,7 +75,7 @@ def check_collision(x1, y1, z1, x2, y2, z2, img, stepSize, end):
     print(f"From ({x2}, {y2}, {z2}) towards ({x1}, {y1}, {z1})")
     print(f"New point: ({x}, {y}, {z})")
     
-    hz, hy, hx = img.shape
+    hx, hy, hz = img.shape
 
     # boundary check
     if x < 0 or x >= hx or y < 0 or y >= hy or z < 0 or z >= hz:
@@ -111,8 +119,8 @@ def rnd_point(hz, hy, hx):
 
 
 def RRT(img, start, end, stepSize, node_list, ax=None):
-    hz, hy, hx = img.shape
-    print(f"Grid shape: {hz} x {hy} x {hx}")
+    hx, hy, hz = img.shape
+    print(f"Grid shape: {hx} x {hy} x {hz}")
     
     node_list.append(Nodes(start[0], start[1], start[2]))
     node_list[0].parent_x.append(start[0])
@@ -203,7 +211,7 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
     if not pathFound:
         print(f"Failed to find path after {max_iterations} iterations")
     
-    return pathFound
+    return pathFound, node_list
 
 
 def draw_cube(ax, corner, size, color='gray', alpha=0.2):
@@ -223,34 +231,71 @@ def draw_cube(ax, corner, size, color='gray', alpha=0.2):
     ]
     ax.add_collection3d(Poly3DCollection(faces, facecolors=color, linewidths=1, edgecolors='black', alpha=alpha))
 
+node_list = []
+j = 1
+
+# Set initial camera position, target, and up vector
+camera_position = [[275, -100, -100], [19, 150, 270], [0, 0, 1]]
+
+def handle_timer(event, end):
+    global j
+
+    if j <= len(node_list) - 1:
+        plotter.add(vedo.Points([ (node_list[j].x, node_list[j].y, node_list[j].z) ], c='blue', r=4))
+    
+    if j == len(node_list) - 1:
+        plotter.add(vedo.Line(list(zip(node_list[j].parent_x, node_list[j].parent_y, node_list[j].parent_z)), c='orange', lw=2))
+        plotter.add(vedo.Line([[end[0], end[1], end[2]], [node_list[j].x, node_list[j].y, node_list[j].z]], c='red', lw=2))
+        plotter.remove_callback("timer")
+        
+    j += 1
+    plotter.show()
+
+def handle_mouse(event, txt):
+    i = event.at
+    pt2d = event.picked2d
+    pt3d = plotter.at(i).compute_world_coordinate(pt2d, objs=plotter.get_meshes())
+    txt.text(f'2D coords: {pt2d}\n3D coords: {pt3d}\n')
+    print(f'2D coords: {pt2d}, 3D coords: {pt3d}')
+    plotter.add(txt)
 
 if __name__ == '__main__':
-    # 3D grid
-    grid = np.ones((100, 100, 100)) * 0  
-    
-    # obstacles
-    grid[30:50, 30:50, 30:50] = 255  
-    grid[60:80, 60:80, 20:40] = 255 
-    
-    start = [10, 10, 10]
-    end = [90, 90, 90]
-    stepSize = 5
+    # Everything's faster in numpy
+    grid = np.array(generate3DArray())
+    generateSTL(grid)
+
+    start = [19, 150, 242]
+    end = [45, 370, 242]
+    stepSize = 2
     node_list = []
-
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_xlim([0, 100])
-    ax.set_ylim([0, 100])
-    ax.set_zlim([0, 100])
-    ax.set_title('3D RRT Path Planning')
     
-    draw_cube(ax, (30, 30, 30), (20, 20, 20), 'red', 0.3)
-    draw_cube(ax, (60, 60, 20), (20, 20, 20), 'red', 0.3)
+    plotter = vedo.Plotter(axes=1)
 
-    pathFound = RRT(grid, start, end, stepSize, node_list, ax)
+    mesh = vedo.load("mesh/mesh_1.stl")
+    mesh.alpha(1) # transparency
+    plotter.add(mesh)
+    plotter.add(vedo.Points([ (start[0], start[1], start[2]) ], c='green', r=8))
+    plotter.add(vedo.Points([ (end[0], end[1], end[2]) ], c='red', r=8))
+
+    # Set start position of camera
+    plotter.fly_to([0, 0, 0])
+    plotter.azimuth(15)
+    plotter.elevation(225)
+    plotter.roll(270)
+
+    pathFound, node_list = RRT(grid, start, end, stepSize, node_list)
+
+    start_time = time.time()
+    
+    # Animate RRT growth
+    plotter.add_callback("timer", lambda event: handle_timer(event, end))
+    plotter.timer_callback("create", dt=20) # dt is animation speed in ms
+
+    # Print current mouse position
+    txt = vedo.Text2D("", s=1.4, pos='bottom-left', c='black', bg='lightyellow')
+    plotter.add_callback('on_left_button_press', lambda event: handle_mouse(event, txt))
+
+    plotter.interactive()
     
     if pathFound:
         print("RRT complete")

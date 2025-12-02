@@ -29,7 +29,7 @@ def generate3DArray():
     return data3D
 
 def generateSTL(data3D):
-    verts, faces, normals, values = measure.marching_cubes(data3D, level=120, step_size=5)
+    verts, faces, normals, values = measure.marching_cubes(data3D, level=120, step_size=1)
     # increase/decrease step_size for more/less detail
 
     obj_3d = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
