@@ -120,7 +120,7 @@ def rnd_point(hz, hy, hx):
     new_z = random.randint(78, 441)
     return (new_x, new_y, new_z)
 
-def rnd_point_near(start, goal, sigma=30, p_center=0.2):
+def rnd_point_near(start, goal, sigma=100, p_center=0.5):
     # Select whether to bias near start or goal
     center = start if random.random() < p_center else goal
 
@@ -150,7 +150,7 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
         ax.scatter([end[0]], [end[1]], [end[2]], color='red', s=100, marker='o', label='Goal')
 
     pathFound = False
-    max_iterations = 5000
+    max_iterations = 10000
     i = 1
     iteration = 0
     
@@ -311,8 +311,8 @@ if __name__ == '__main__':
     plotter.timer_callback("create", dt=20) # dt is animation speed in ms
 
     # Print current mouse position
-    txt = vedo.Text2D("", s=1.4, pos='bottom-left', c='black', bg='lightyellow')
-    plotter.add_callback('on_left_button_press', lambda event: handle_mouse(event, txt))
+    # txt = vedo.Text2D("", s=1.4, pos='bottom-left', c='black', bg='lightyellow')
+    # plotter.add_callback('on_left_button_press', lambda event: handle_mouse(event, txt))
 
     plotter.interactive()
     
