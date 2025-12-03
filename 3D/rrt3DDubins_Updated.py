@@ -1,6 +1,7 @@
 """
-3D RRT with Dubins Path Planning - Proper Tree Exploration
-Uses generate3DArray() for the same map as original RRT code
+3D RRT with Dubins Path Planning
+Reference code: https://github.com/FelicienC/RRT-Dubins
+Edited by: Colton
 """
 
 import numpy as np
@@ -10,9 +11,9 @@ import vedo
 from generate3D import generate3DArray, generateSTL
 
 
-# ====================================================================
-# DUBINS PATH PLANNER (2D) - Simplified for RRT
-# ====================================================================
+# -----------------------------------------
+# DUBINS PATH PLANNER (2D) - Simplified RRT
+# -----------------------------------------
 
 def dist(pt_a, pt_b):
     return math.sqrt((pt_a[0] - pt_b[0]) ** 2 + (pt_a[1] - pt_b[1]) ** 2)
@@ -88,9 +89,9 @@ class Dubins:
         return np.array(points)
 
 
-# ====================================================================
+# ------------------------------
 # 3D RRT WITH DUBINS CONSTRAINTS
-# ====================================================================
+# ------------------------------
 
 class Nodes:
     def __init__(self, x, y, z, heading=0.0):
@@ -135,11 +136,10 @@ def check_collision_dubins(x1, y1, z1, heading1,
 
     heading_change = abs(mod2pi(heading1 - heading2))
 
-    # Minimum distance needed for this heading change - RELAXED constraint
-    # Allow heading changes if we have reasonable distance
-    min_distance_needed = heading_change * dubins_planner.radius * 0.3  # Much more lenient
+    # Minimum distance needed 
+    min_distance_needed = heading_change * dubins_planner.radius * 0.3  
 
-    # Only REJECT if the turn is extremely tight
+    # Reject for extreme turns
     if distance_2d < min_distance_needed and heading_change > np.pi / 2:
         return x2, y2, z2, heading2, False, False, None
 
@@ -282,7 +282,7 @@ def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
     while not pathFound and iteration < max_iterations:
         iteration += 1
 
-        # Smart sampling strategy - better bias for faster convergence
+        # Goal Bias, needed for stl area
         rand_val = random.random()
         if rand_val < 0.1:
             # 10% - Sample exact goal
@@ -365,7 +365,7 @@ def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
                 solution_path.reverse()
                 solution_path.extend(final_3d)
 
-                # Draw solution path on TOP of tree
+                # Draw RED solution path
                 solution_array = np.array(solution_path)
                 plotter.add(vedo.Tube(solution_array, c='red', r=3))
                 plotter.add(vedo.Line(solution_array, c='yellow', lw=3))
@@ -380,9 +380,9 @@ def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
     return pathFound, node_list
 
 
-# ====================================================================
+# ------------
 # MAIN
-# ====================================================================
+# ------------
 
 if __name__ == '__main__':
     print("Generating 3D array...")
@@ -390,30 +390,22 @@ if __name__ == '__main__':
     generateSTL(grid)
     print(f"Grid generated: {grid.shape}")
 
-    start = [24, 160, 240, 0.0]
+    start = [35, 192, 242, 0.0]
     end = [45, 280, 200, np.pi / 4]
-    stepSize = 10  # Slightly larger for smoother curves
-    dubins_radius = 12.0  # Stricter turning constraint
+    stepSize = 10  # Change the step size
+    dubins_radius = 15.0  # Radius of the Dubins path
 
     print(f"\nStart: {start}")
     print(f"End: {end}")
     print(f"Step size: {stepSize}")
-    print(f"Dubins turning radius: {dubins_radius} (STRICT)")
-    print(f"\nDubins Constraints:")
-    print(f"  ✓ Maximum curvature: {1.0 / dubins_radius:.3f}")
-    print(f"  ✓ Rejects sharp turns")
-    print(f"  ✓ Rejects incompatible headings")
-    print(f"\nSampling strategy:")
-    print(f"  - 10% exact goal")
-    print(f"  - 60% biased region (start-goal corridor)")
-    print(f"  - 30% random exploration")
+    print(f"Dubins turning radius: {dubins_radius}")
     print()
 
     # Setup visualization
     plotter = vedo.Plotter(axes=1)
 
     mesh = vedo.load("mesh/mesh_1.stl")
-    mesh.alpha(0.15)  # Very transparent to see tree
+    mesh.alpha(0.15)  # Alpha slt value, CHANGE TO SEE INSIDE PATH
     plotter.add(mesh)
 
     plotter.add(vedo.Points([start[:3]], c='green', r=10))
@@ -425,16 +417,13 @@ if __name__ == '__main__':
 
     plotter.show(interactive=False)
 
-    print("Running RRT with Dubins constraints...")
-    print("Watch the tree grow and branch out!\n")
+    print("Running RRT with Dubins constraints")
     pathFound, node_list = RRT_Dubins_Realtime(grid, start, end, stepSize, dubins_radius, plotter)
 
     if pathFound:
-        print("\n✓ Solution path highlighted in RED on the tree!")
-        print("  - Cyan lines: exploration tree")
-        print("  - Blue points: tree nodes")
-        print("  - Red tube: solution path")
+        print("\n Solution Path shown in RED")
+
     else:
-        print("✗ Failed to find path")
+        print("Failed to find path")
 
     plotter.interactive()
