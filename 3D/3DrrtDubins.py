@@ -1,4 +1,5 @@
 """
+Originally from https://github.com/FelicienC/RRT-Dubins/blob/master/code/dubins.py
 3D RRT with Dubins Path Planning
 Integrates 2D Dubins curves with 3D RRT for curvature-constrained path planning
 """
