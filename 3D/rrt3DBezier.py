@@ -16,6 +16,9 @@ import time
 import vedo
 from generate3D import generate3DArray, generateSTL
 
+import sys
+sys.setrecursionlimit(10000)
+
 class Nodes:
     """Class to store the RRT graph"""
     def __init__(self, x, y, z):
@@ -39,6 +42,7 @@ def collision(x1, y1, z1, x2, y2, z2, img):
     z = z1 + t * (z2 - z1)
     
     hx, hy, hz = img.shape 
+    print(hx, hy, hz)
     
     for i in range(numSamples): 
         xi, yi, zi = int(x[i]), int(y[i]), int(z[i])
@@ -195,11 +199,26 @@ def nearest_node(x, y, z):
     return temp_dist.index(min(temp_dist)) 
 
 def rnd_point(hx, hy, hz):
-    new_x = random.randint(0, hx)
-    new_y = random.randint(0, hy)
-    new_z = random.randint(0, hz)
+    # new_x = random.randint(0, hx)
+    # new_y = random.randint(0, hy)
+    # new_z = random.randint(0, hz)
+    new_x = random.randint(3, 186)
+    new_y = random.randint(125, 370)
+    new_z = random.randint(78, 441)
     return (new_x, new_y, new_z)
 
+def rnd_point_near(start, goal, sigma=100, p_center=0.5):
+    center = start if random.random() < p_center else goal
+
+    x = int(np.random.normal(center[0], sigma))
+    y = int(np.random.normal(center[1], sigma))
+    z = int(np.random.normal(center[2], sigma))
+
+    x = np.clip(x, 3, 186)
+    y = np.clip(y, 192, 370)
+    z = np.clip(z, 78, 441)
+
+    return (x, y, z)
 
 def RRT(img, start, end, stepSize, node_list, ax=None, bezier=False):
     hx, hy, hz = img.shape
@@ -226,7 +245,8 @@ def RRT(img, start, end, stepSize, node_list, ax=None, bezier=False):
         if random.random() < 0.1:
             nx, ny, nz = end[0], end[1], end[2]
         else:
-            nx, ny, nz = rnd_point(hx, hy, hz)
+            # nx, ny, nz = rnd_point(hx, hy, hz)
+            nx, ny, nz = rnd_point_near(start, end, sigma=100, p_center=0.5)
         
         print(f"\nIteration {iteration}: Random point: ({nx}, {ny}, {nz})")
         
@@ -390,17 +410,17 @@ def handle_mouse(event, txt):
 if __name__ == '__main__':
     # Everything's faster in numpy
     grid = np.array(generate3DArray())
-    generateSTL(grid)
+    # generateSTL(grid)
 
-    start = [19, 150, 242]
-    end = [45, 370, 242]
-    stepSize = 2
+    start = [35, 170, 242]
+    end = [45, 280, 200]
+    stepSize = 10
     node_list = []
     
     plotter = vedo.Plotter(axes=1)
 
     mesh = vedo.load("mesh/mesh_1.stl")
-    mesh.alpha(1) # transparency
+    mesh.alpha(0.1) # transparency
     plotter.add(mesh)
     plotter.add(vedo.Points([ (start[0], start[1], start[2]) ], c='green', r=8))
     plotter.add(vedo.Points([ (end[0], end[1], end[2]) ], c='red', r=8))

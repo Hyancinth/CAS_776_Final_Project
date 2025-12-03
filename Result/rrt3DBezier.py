@@ -1,6 +1,6 @@
 """
 Originally from https://github.com/nimRobotics/RRT/blob/master/rrt.py
-modified by: Ethan and Marko
+modified by: Ethan
 """
 
 import cv2
@@ -14,12 +14,6 @@ import os
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import time
 import vedo
-from generate3D import generate3DArray, generateSTL
-
-# Needed to increase recursion limit for large RRTs
-import sys
-sys.setrecursionlimit(10000)
-
 
 class Nodes:
     """Class to store the RRT graph"""
@@ -59,6 +53,95 @@ def collision(x1, y1, z1, x2, y2, z2, img):
             return True
         
     return False
+
+def collision_bezier(x1, y1, z1, x2, y2, z2, img):
+    obstacleThreshold = 230
+
+    x, y, z = generate_bezier_points(x1, y1, z1, x2, y2, z2)
+    numSamples = len(x)
+
+    hx, hy, hz = img.shape
+    for i in range(numSamples):
+        xi, yi, zi = int(x[i]), int(y[i]), int(z[i])
+        
+        # boundary check
+        if (xi < 0 or xi >= hx or
+            yi < 0 or yi >= hy or
+            zi < 0 or zi >= hz):
+            return True
+        
+        # obstacle check
+        if img[xi, yi, zi] < obstacleThreshold:
+            return True
+        
+    return False
+
+def generate_bezier_points(x1, y1, z1, x2, y2, z2):
+    # x1, y1, z1 : start point
+    # x2, y2, z2 : end point
+
+    numSamples = 100
+
+    midX = (x1+x2)/2
+    midY = (y1+y2)/2
+    midZ = (z1+z2)/2
+
+    dx = x2 - x1
+    dy = y2 - y1
+    dz = z2 - z1
+    norm = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+    if norm == 0:
+        return [x1]*numSamples, [y1]*numSamples, [z1]*numSamples
+
+    controlOffset = 0.5
+    if dx and dy != 0:
+        perp = (-dy/norm, dx/norm, 0)
+    else:
+        perp = (1, 0, 0)
+    controlX = midX + perp[0] * controlOffset
+    controlY = midY + perp[1] * controlOffset
+    controlZ = midZ + perp[2] * controlOffset
+
+    t = np.linspace(0, 1, numSamples)
+    x = (1 - t)**2 * x1 + 2 * (1 - t) * t * controlX + t**2 * x2
+    y = (1 - t)**2 * y1 + 2 * (1 - t) * t * controlY + t**2 * y2
+    z = (1 - t)**2 * z1 + 2 * (1 - t) * t * controlZ + t**2 * z2
+
+    return x, y, z
+
+def check_collision_bezier(x1, y1, z1, x2, y2, z2, img, stepSize, end):
+    dist = dist_3d(x1, y1, z1, x2, y2, z2) # distance between the two points
+    if dist == 0:
+        return x2, y2, z2, False, False
+    # new point going in the direction of (x2, y2, z2) to (x1, y1, z1)
+    x = x2 + (stepSize / dist) * (x1 - x2)
+    y = y2 + (stepSize / dist) * (y1 - y2)
+    z = z2 + (stepSize / dist) * (z1 - z2)
+
+    print(f"From ({x2}, {y2}, {z2}) towards ({x1}, {y1}, {z1})")
+    print(f"New point: ({x}, {y}, {z})")
+
+    hx, hy, hz = img.shape
+    # boundary check
+    if x < 0 or x >= hx or y < 0 or y >= hy or z < 0 or z >= hz:
+        print("Point out of bounds")
+        directCon = False
+        nodeCon = False
+    else:
+        # Check direct connection to goal
+        if collision_bezier(x, y, z, end[0], end[1], end[2], img):
+            directCon = False
+        else:
+            directCon = True
+
+        # Check connection to nearest node
+        if collision_bezier(x, y, z, x2, y2, z2, img):
+            nodeCon = False
+        else:
+            nodeCon = True
+
+    return (x, y, z, directCon, nodeCon)
 
 def check_collision(x1, y1, z1, x2, y2, z2, img, stepSize, end):
     # x1,y1,z1 is the random point
@@ -100,7 +183,7 @@ def check_collision(x1, y1, z1, x2, y2, z2, img, stepSize, end):
 def dist_3d(x1, y1, z1, x2, y2, z2):
     return math.sqrt(((x1 - x2) ** 2) + ((y1 - y2) ** 2) + ((z1 - z2) ** 2))
 
-def nearest_node(x, y, z):
+def nearest_node(x, y, z, node_list):
     # return the index of the nearest node in node_list to the point (x, y, z)
     temp_dist = []
     for i in range(len(node_list)):
@@ -111,16 +194,16 @@ def nearest_node(x, y, z):
             temp_dist.append(float('inf'))
     return temp_dist.index(min(temp_dist)) 
 
-def rnd_point(hz, hy, hx):
+def rnd_point(hx, hy, hz):
     # new_x = random.randint(0, hx)
     # new_y = random.randint(0, hy)
     # new_z = random.randint(0, hz)
     new_x = random.randint(3, 186)
-    new_y = random.randint(125, 370)
+    new_y = random.randint(192, 370)
     new_z = random.randint(78, 441)
     return (new_x, new_y, new_z)
 
-def rnd_point_near(start, goal, sigma=30, p_center=0.2):
+def rnd_point_near(start, goal, sigma=100, p_center=0.5):
     # Select whether to bias near start or goal
     center = start if random.random() < p_center else goal
 
@@ -135,8 +218,18 @@ def rnd_point_near(start, goal, sigma=30, p_center=0.2):
 
     return (x, y, z)
 
+def bezier_curve_length(x1, y1, z1, x2, y2, z2):
+    x, y, z = generate_bezier_points(x1, y1, z1, x2, y2, z2)
+    totalLength = 0
+    for i in range(1, len(x)):
+        totalLength += dist_3d(x[i-1], y[i-1], z[i-1], x[i], y[i], z[i])
+    return totalLength
 
-def RRT(img, start, end, stepSize, node_list, ax=None):
+def RRT_Bezier(img, start, end, stepSize, ax=None, bezier=False):
+    node_list = []
+    startTime = time.perf_counter()
+    totalDistance = 0
+
     hx, hy, hz = img.shape
     print(f"Grid shape: {hx} x {hy} x {hz}")
     
@@ -150,7 +243,7 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
         ax.scatter([end[0]], [end[1]], [end[2]], color='red', s=100, marker='o', label='Goal')
 
     pathFound = False
-    max_iterations = 5000
+    max_iterations = 10000
     i = 1
     iteration = 0
     
@@ -161,22 +254,27 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
         if random.random() < 0.1:
             nx, ny, nz = end[0], end[1], end[2]
         else:
-            # nx, ny, nz = rnd_point(hz, hy, hx)
+            # nx, ny, nz = rnd_point(hx, hy, hz)
             nx, ny, nz = rnd_point_near(start, end, sigma=30, p_center=0.5)
         
         print(f"\nIteration {iteration}: Random point: ({nx}, {ny}, {nz})")
         
-        nearestIndex = nearest_node(nx, ny, nz)
+        nearestIndex = nearest_node(nx, ny, nz, node_list)
         nearest_x = node_list[nearestIndex].x
         nearest_y = node_list[nearestIndex].y
         nearest_z = node_list[nearestIndex].z
         print(f"Nearest node: ({nearest_x}, {nearest_y}, {nearest_z})")
         
-        tx, ty, tz, directCon, nodeCon = check_collision(nx, ny, nz, nearest_x, nearest_y, nearest_z, img, stepSize, end)
+        if bezier:
+            tx, ty, tz, directCon, nodeCon = check_collision_bezier(nx, ny, nz, nearest_x, nearest_y, nearest_z, img, stepSize, end)
+            btx, bty, btz = generate_bezier_points(nearest_x, nearest_y, nearest_z, tx, ty, tz)
+        else:
+            tx, ty, tz, directCon, nodeCon = check_collision(nx, ny, nz, nearest_x, nearest_y, nearest_z, img, stepSize, end)
         
         if directCon and nodeCon:
             print("Direct connection to goal possible")
-            
+            totalDistance += bezier_curve_length(tx, ty, tz, end[0], end[1], end[2]) if bezier else dist_3d(tx, ty, tz, end[0], end[1], end[2])
+
             node_list.append(Nodes(tx, ty, tz))
             node_list[i].parent_x = node_list[nearestIndex].parent_x.copy()
             node_list[i].parent_y = node_list[nearestIndex].parent_y.copy()
@@ -185,22 +283,16 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
             node_list[i].parent_y.append(ty)
             node_list[i].parent_z.append(tz)
 
-            if ax is not None:
-                # Draw final connection
-                ax.plot([nearest_x, tx], [nearest_y, ty], [nearest_z, tz], 
-                       color='blue', linewidth=1)
-                ax.plot([tx, end[0]], [ty, end[1]], [tz, end[2]], 
-                       color='blue', linewidth=2)
-                
-                # Draw complete path
-                path_x = node_list[i].parent_x
-                path_y = node_list[i].parent_y
-                path_z = node_list[i].parent_z
-                ax.plot(path_x, path_y, path_z, color='red', linewidth=3, label='Path')
-                
-                ax.legend()
-                plt.savefig('RRT_3D_final.png', dpi=150, bbox_inches='tight')
-                plt.show()
+             # Draw complete path
+            path_x = node_list[i].parent_x
+            path_y = node_list[i].parent_y
+            path_z = node_list[i].parent_z
+
+            if bezier:
+                for j in range(len(path_x)-1):
+                    totalDistance += bezier_curve_length(path_x[j], path_y[j], path_z[j],
+                                                            path_x[j+1], path_y[j+1], path_z[j+1])
+                  
             
             pathFound = True
             print(f"RRT Path length: {len(node_list[i].parent_x)} nodes")
@@ -208,6 +300,8 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
         
         elif nodeCon:
             print("Node connected to tree")
+            # totalDistance += bezier_curve_length(tx, ty, tz, nearest_x, nearest_y, nearest_z) if bezier else dist_3d(tx, ty, tz, nearest_x, nearest_y, nearest_z)
+
             node_list.append(Nodes(tx, ty, tz))
             node_list[i].parent_x = node_list[nearestIndex].parent_x.copy()
             node_list[i].parent_y = node_list[nearestIndex].parent_y.copy()
@@ -217,8 +311,8 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
             node_list[i].parent_z.append(tz)
 
             if ax is not None: 
-                ax.plot([nearest_x, tx], [nearest_y, ty], [nearest_z, tz], 
-                       color='lightblue', linewidth=0.5, alpha=0.5)
+                # ax.plot([nearest_x, tx], [nearest_y, ty], [nearest_z, tz], 
+                #        color='lightblue', linewidth=0.5, alpha=0.5)
                 ax.scatter([tx], [ty], [tz], color='blue', s=5)
                 plt.pause(0.001)
             
@@ -230,93 +324,6 @@ def RRT(img, start, end, stepSize, node_list, ax=None):
     if not pathFound:
         print(f"Failed to find path after {max_iterations} iterations")
     
-    return pathFound, node_list
-
-
-def draw_cube(ax, corner, size, color='gray', alpha=0.2):
-    x, y, z = corner
-    dx, dy, dz = size
-    vertices = [
-        [x, y, z], [x+dx, y, z], [x+dx, y+dy, z], [x, y+dy, z],
-        [x, y, z+dz], [x+dx, y, z+dz], [x+dx, y+dy, z+dz], [x, y+dy, z+dz]
-    ]
-    faces = [
-        [vertices[j] for j in [0, 1, 5, 4]],
-        [vertices[j] for j in [7, 6, 2, 3]],
-        [vertices[j] for j in [0, 3, 7, 4]],
-        [vertices[j] for j in [1, 2, 6, 5]],
-        [vertices[j] for j in [0, 1, 2, 3]],
-        [vertices[j] for j in [4, 5, 6, 7]]
-    ]
-    ax.add_collection3d(Poly3DCollection(faces, facecolors=color, linewidths=1, edgecolors='black', alpha=alpha))
-
-node_list = []
-j = 1
-
-# Set initial camera position, target, and up vector
-# camera_position = [[275, -100, -100], [19, 150, 270], [0, 0, 1]]
-
-def handle_timer(event, end):
-    global j
-
-    if j <= len(node_list) - 1:
-        plotter.add(vedo.Points([ (node_list[j].x, node_list[j].y, node_list[j].z) ], c='blue', r=4))
-    
-    if j == len(node_list) - 1:
-        plotter.add(vedo.Line(list(zip(node_list[j].parent_x, node_list[j].parent_y, node_list[j].parent_z)), c='orange', lw=2))
-        plotter.add(vedo.Line([[end[0], end[1], end[2]], [node_list[j].x, node_list[j].y, node_list[j].z]], c='red', lw=2))
-        plotter.remove_callback("timer")
-        
-    j += 1
-    plotter.show()
-
-def handle_mouse(event, txt):
-    i = event.at
-    pt2d = event.picked2d
-    pt3d = plotter.at(i).compute_world_coordinate(pt2d, objs=plotter.get_meshes())
-    txt.text(f'2D coords: {pt2d}\n3D coords: {pt3d}\n')
-    print(f'2D coords: {pt2d}, 3D coords: {pt3d}')
-    plotter.add(txt)
-
-if __name__ == '__main__':
-    # Everything's faster in numpy
-    grid = np.array(generate3DArray())
-    # generateSTL(grid)
-
-    start = [35, 170, 242]
-    end = [45, 280, 200]
-    stepSize = 10
-    node_list = []
-    
-    plotter = vedo.Plotter(axes=1)
-
-    mesh = vedo.load("mesh/mesh_1.stl")
-    mesh.alpha(0.1) # transparency
-    plotter.add(mesh)
-    plotter.add(vedo.Points([ (start[0], start[1], start[2]) ], c='green', r=8))
-    plotter.add(vedo.Points([ (end[0], end[1], end[2]) ], c='red', r=8))
-
-    # Set start position of camera
-    # plotter.fly_to([0, 0, 0])
-    # plotter.azimuth(15)
-    # plotter.elevation(225)
-    # plotter.roll(270)
-
-    pathFound, node_list = RRT(grid, start, end, stepSize, node_list)
-
-    start_time = time.time()
-    
-    # Animate RRT growth
-    plotter.add_callback("timer", lambda event: handle_timer(event, end))
-    plotter.timer_callback("create", dt=20) # dt is animation speed in ms
-
-    # Print current mouse position
-    txt = vedo.Text2D("", s=1.4, pos='bottom-left', c='black', bg='lightyellow')
-    plotter.add_callback('on_left_button_press', lambda event: handle_mouse(event, txt))
-
-    plotter.interactive()
-    
-    if pathFound:
-        print("RRT complete")
-    else:
-        print("RRT failed to find a path")
+    endTime = time.perf_counter()
+    totalTime = endTime - startTime
+    return pathFound, node_list, totalDistance, totalTime, i, len(node_list)
