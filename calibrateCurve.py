@@ -5,11 +5,11 @@ import glob
 import json
 from scipy.optimize import least_squares
 
-# Loads image and crops the central region (default = center 50%)
+# Loads image and crops
 def load_and_crop(image_path, crop_fraction=0.25):
     img = cv2.imread(image_path)
     if img is None:
-        raise RuntimeError(f"Could not read image: {image_path}")
+        raise RuntimeError("Could not read image: {image_path}")
     height, width = img.shape[:2]
     x_start = int(width * crop_fraction)
     x_end = int(width * (1 - crop_fraction))
@@ -17,7 +17,7 @@ def load_and_crop(image_path, crop_fraction=0.25):
     y_end = int(height * (1 - crop_fraction))
     return img[y_start:y_end, x_start:x_end]
 
-# Quick mask to catch either bluish or generally dark regions — tuning may vary
+# Quick mask
 def threshold_blue_or_dark(img_bgr, hue_min=90, hue_max=140, sat_min=30, val_min=50, dark_threshold=80):
     hsv_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
@@ -31,7 +31,7 @@ def threshold_blue_or_dark(img_bgr, hue_min=90, hue_max=140, sat_min=30, val_min
     combined = cv2.bitwise_or(blue_mask, dark_mask)
     return combined
 
-# Just tidies up the binary mask — morphological ops
+# Clean binary mask
 def clean_mask(mask, closing_kernel=(5,5), dilate_iter=1, erode_iter=1):
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, closing_kernel)
     m = mask.copy()
@@ -43,7 +43,7 @@ def clean_mask(mask, closing_kernel=(5,5), dilate_iter=1, erode_iter=1):
         m = cv2.erode(m, k, iterations=erode_iter)
     return m
 
-# Extract midpoints of active regions, row-wise — this gives us a rough centerline
+# Extract midpoints of active regions, gives a rough centerline
 def compute_row_midpoints(mask, row_step=1):
     h, w = mask.shape
     pts = []
@@ -56,7 +56,7 @@ def compute_row_midpoints(mask, row_step=1):
             pts.append((center_x, y))
     return np.array(pts, dtype=float)
 
-# Cubic Bézier fitting using least squares – this is the core curve fitting logic
+# Cubic Bézier fitting using least squares
 def fit_cubic_bezier(points):
     P0 = points[0]
     P3 = points[-1]
@@ -82,13 +82,13 @@ def fit_cubic_bezier(points):
     P2 = res.x[2:4]
     return np.array([P0, P1, P2, P3])
 
-# Find the width of the shape at the very bottom row — assume this is known width in mm
+# Find the width of the shape at the very bottom row assume this is known width in mm
 def get_base_width_pixels(mask):
     h, w = mask.shape
     last_row = mask[h - 1, :]
     x_vals = np.where(last_row > 0)[0]
     if len(x_vals) < 2:
-        raise RuntimeError("Base width not detected — bad bottom row?")
+        raise RuntimeError("Base width not detected")
     width = x_vals[-1] - x_vals[0]
     center_x = x_vals.mean()
     return width, center_x, h - 1
@@ -98,11 +98,10 @@ def convert_control_pts_to_mm(control_pts_px, base_center_x, base_y, pixels_per_
     points_mm = []
     for x, y in control_pts_px:
         x_mm = (x - base_center_x) / pixels_per_mm
-        y_mm = (y - base_y) / pixels_per_mm
+        y_mm = (base_y - y) / pixels_per_mm
         points_mm.append([x_mm, y_mm])
     return points_mm
 
-# Grab the numeric part of filename — used as the field strength
 def parse_field_strength_from_filename(filepath):
     name = os.path.basename(filepath).split('.')[0]
     num_str = ''
@@ -112,7 +111,7 @@ def parse_field_strength_from_filename(filepath):
         else:
             break
     if not num_str:
-        raise ValueError(f"Couldn't parse number from filename: {filepath}")
+        raise ValueError("Couldn't parse number from filename: {filepath}")
     return float(num_str)
 
 # Main processing block
@@ -129,9 +128,6 @@ if __name__ == "__main__":
             mask = clean_mask(mask_raw)
 
             midline_pts = compute_row_midpoints(mask)
-            if len(midline_pts) < 2:
-                print(f"Skipping {path} — not enough midpoints to fit.")
-                continue
 
             bez_ctrl_px = fit_cubic_bezier(midline_pts)
 
@@ -149,8 +145,6 @@ if __name__ == "__main__":
                 'base_width_mm': 4.0
             }
 
-            # Note: could save debug overlays etc., but skipping for now
-
         except Exception as err:
             print("Error processing", path, ":", err)
 
@@ -158,4 +152,4 @@ if __name__ == "__main__":
     with open(output_json, 'w') as f_out:
         json.dump(calibration_data, f_out, indent=2)
 
-    print("Saved control points (mm, origin at base-center) to", output_json)
+    print("Saved control points (mm, origin at base) to", output_json)
