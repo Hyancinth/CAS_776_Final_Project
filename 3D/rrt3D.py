@@ -235,7 +235,7 @@ node_list = []
 j = 1
 
 # Set initial camera position, target, and up vector
-camera_position = [[275, -100, -100], [19, 150, 270], [0, 0, 1]]
+# camera_position = [[275, -100, -100], [19, 150, 270], [0, 0, 1]]
 
 def handle_timer(event, end):
     global j
@@ -278,10 +278,10 @@ if __name__ == '__main__':
     plotter.add(vedo.Points([ (end[0], end[1], end[2]) ], c='red', r=8))
 
     # Set start position of camera
-    plotter.fly_to([0, 0, 0])
-    plotter.azimuth(15)
-    plotter.elevation(225)
-    plotter.roll(270)
+    # plotter.fly_to([0, 0, 0])
+    # plotter.azimuth(15)
+    # plotter.elevation(225)
+    # plotter.roll(270)
 
     pathFound, node_list = RRT(grid, start, end, stepSize, node_list)
 
