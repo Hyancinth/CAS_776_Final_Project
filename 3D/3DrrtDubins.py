@@ -9,6 +9,13 @@ import math
 import random
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import time
+import vedo
+from generate3D import generate3DArray, generateSTL
+
+# Needed to increase recursion limit for large RRTs
+import sys
+sys.setrecursionlimit(2000)
 
 # ============================================================================
 # DUBINS PATH PLANNER (2D)
@@ -288,12 +295,12 @@ def check_collision_dubins(x1, y1, z1, heading1, x2, y2, z2, heading2,
         new_heading = heading2
     
     # Boundary check
-    hz, hy, hx = img.shape
+    hx, hy, hz = img.shape
     if tx < 0 or tx >= hx or ty < 0 or ty >= hy or tz < 0 or tz >= hz:
         return (tx, ty, tz, new_heading, False, False, None)
     
     # Collision check along entire curve
-    obstacleThreshold = 180
+    obstacleThreshold = 230
     for i in range(len(limited_points)):
         xi = int(limited_points[i][0])
         yi = int(limited_points[i][1])
@@ -302,7 +309,7 @@ def check_collision_dubins(x1, y1, z1, heading1, x2, y2, z2, heading2,
         if xi < 0 or xi >= hx or yi < 0 or yi >= hy or zi < 0 or zi >= hz:
             return (tx, ty, tz, new_heading, False, False, None)
         
-        if img[zi, yi, xi] > obstacleThreshold:
+        if img[xi, yi, zi] < obstacleThreshold:
             return (tx, ty, tz, new_heading, False, False, None)
     
     # Check direct connection to goal (simplified - just check if close)
@@ -347,7 +354,7 @@ def RRT_Dubins(img, start, end, stepSize, dubins_radius=8.0, ax=None):
     - dubins_radius: minimum turn radius
     - ax: matplotlib 3D axis for visualization
     """
-    hz, hy, hx = img.shape
+    hx, hy, hz = img.shape
     print(f"\n{'='*60}")
     print(f"3D RRT with Dubins Constraints")
     print(f"{'='*60}")
@@ -478,7 +485,7 @@ def RRT_Dubins(img, start, end, stepSize, dubins_radius=8.0, ax=None):
     if not pathFound:
         print(f"\n✗ Failed to find path after {max_iterations} iterations")
     
-    return pathFound
+    return pathFound, node_list
 
 def draw_cube(ax, corner, size, color='gray', alpha=0.2):
     """Draw a 3D cube obstacle"""
@@ -503,53 +510,95 @@ def draw_cube(ax, corner, size, color='gray', alpha=0.2):
 # MAIN
 # ============================================================================
 
+node_list = []
+j = 1
+
+# Set initial camera position, target, and up vector
+# camera_position = [[275, -100, -100], [19, 150, 270], [0, 0, 1]]
+
+def handle_timer(event, end):
+    global j
+
+    if j <= len(node_list) - 1:
+        plotter.add(vedo.Points([ (node_list[j].x, node_list[j].y, node_list[j].z) ], c='blue', r=4))
+    
+    if j == len(node_list) - 1:
+        nodes_x = []
+        nodes_y = []
+        nodes_z = []
+
+        nodes = node_list[len(node_list) - 1].curve_segments
+        for segment in nodes:
+            for pt in segment:
+                nodes_x.append(pt[0])
+                nodes_y.append(pt[1])
+                nodes_z.append(pt[2])
+        
+        # nodes_x.append(points[i+1][0])
+        # nodes_y.append(points[i+1][1])
+        # nodes_z.append(points[i+1][2])
+
+        plotter.add(vedo.Line(list(zip(nodes_x, nodes_y, nodes_z)), c='orange', lw=2))
+        
+        plotter.remove_callback("timer")
+        
+    j += 1
+    plotter.show()
+
+def handle_mouse(event, txt):
+    i = event.at
+    pt2d = event.picked2d
+    pt3d = plotter.at(i).compute_world_coordinate(pt2d, objs=plotter.get_meshes())
+    txt.text(f'2D coords: {pt2d}\n3D coords: {pt3d}\n')
+    print(f'2D coords: {pt2d}, 3D coords: {pt3d}')
+    plotter.add(txt)
+
 if __name__ == '__main__':
     print("\n" + "="*60)
     print("3D RRT WITH DUBINS PATH CONSTRAINTS")
     print("="*60)
     
-    # Create 3D obstacle grid
-    grid = np.zeros((100, 100, 100))
-    
-    # Add multiple obstacles at different locations and heights
-    grid[30:50, 30:50, 30:50] = 255  # Large center obstacle
-    grid[60:80, 60:80, 20:40] = 255  # Upper right obstacle
-    grid[10:25, 60:75, 50:70] = 255  # Left-side mid-height obstacle
-    grid[70:85, 15:30, 60:80] = 255  # Right-side high obstacle
-    grid[40:55, 70:85, 10:30] = 255  # Back-side low obstacle
-    grid[20:30, 20:30, 70:85] = 255  # Small high obstacle near start
-    grid[75:90, 75:90, 75:90] = 255  # Small obstacle near goal
+    grid = np.array(generate3DArray())
+    generateSTL(grid)
     
     # Define start and end with headings (in radians)
-    start = [10, 10, 10, 0.0]  # [x, y, z, heading]
-    end = [90, 90, 90, np.pi/4]  # heading toward northeast
+    start = [19, 150, 242, np.pi/4]  # [x, y, z, heading]
+    end = [45, 370, 242, np.pi/4]  # heading toward northeast
     
     stepSize = 10
     dubins_radius = 8.0  # Minimum turning radius
     
-    # Setup visualization
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_xlim([0, 100])
-    ax.set_ylim([0, 100])
-    ax.set_zlim([0, 100])
-    ax.set_title('3D RRT with Dubins Constraints - Complex Environment')
+    node_list = []
     
-    # Draw all obstacles with different colors for variety
-    draw_cube(ax, (30, 30, 30), (20, 20, 20), 'red', 0.3)
-    draw_cube(ax, (60, 60, 20), (20, 20, 20), 'red', 0.3)
-    draw_cube(ax, (10, 60, 50), (15, 15, 20), 'orange', 0.3)
-    draw_cube(ax, (70, 15, 60), (15, 15, 20), 'purple', 0.3)
-    draw_cube(ax, (40, 70, 10), (15, 15, 20), 'brown', 0.3)
-    draw_cube(ax, (20, 20, 70), (10, 10, 15), 'pink', 0.3)
-    draw_cube(ax, (75, 75, 75), (15, 15, 15), 'darkred', 0.3)
+    plotter = vedo.Plotter(axes=1)
+
+    mesh = vedo.load("mesh/mesh_1.stl")
+    mesh.alpha(1) # transparency
+    plotter.add(mesh)
+    plotter.add(vedo.Points([ (start[0], start[1], start[2]) ], c='green', r=8))
+    plotter.add(vedo.Points([ (end[0], end[1], end[2]) ], c='red', r=8))
+
+    # Set start position of camera
+    # plotter.fly_to([0, 0, 0])
+    # plotter.azimuth(15)
+    # plotter.elevation(225)
+    # plotter.roll(270)
     
     # Run RRT with Dubins
-    pathFound = RRT_Dubins(grid, start, end, stepSize, dubins_radius, ax)
+    pathFound, node_list = RRT_Dubins(grid, start, end, stepSize, dubins_radius, None)
     
+    start_time = time.time()
+    
+    # Animate RRT growth
+    plotter.add_callback("timer", lambda event: handle_timer(event, end))
+    plotter.timer_callback("create", dt=20) # dt is animation speed in ms
+
+    # Print current mouse position
+    txt = vedo.Text2D("", s=1.4, pos='bottom-left', c='black', bg='lightyellow')
+    plotter.add_callback('on_left_button_press', lambda event: handle_mouse(event, txt))
+
+    plotter.interactive()
+
     print("\n" + "="*60)
     if pathFound:
         print("✓ RRT with Dubins constraints complete!")
