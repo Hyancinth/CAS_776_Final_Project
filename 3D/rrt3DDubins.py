@@ -15,7 +15,7 @@ from generate3D import generate3DArray, generateSTL
 
 # Needed to increase recursion limit for large RRTs
 import sys
-sys.setrecursionlimit(2000)
+sys.setrecursionlimit(50000)
 
 # ============================================================================
 # DUBINS PATH PLANNER (2D)
@@ -380,7 +380,7 @@ def RRT_Dubins(img, start, end, stepSize, dubins_radius=8.0, ax=None):
         ax.scatter([end[0]], [end[1]], [end[2]], color='red', s=100, marker='o', label='Goal')
     
     pathFound = False
-    max_iterations = 5000
+    max_iterations = 20000
     i = 1
     iteration = 0
     
@@ -505,41 +505,175 @@ def draw_cube(ax, corner, size, color='gray', alpha=0.2):
     ]
     ax.add_collection3d(Poly3DCollection(faces, facecolors=color, 
                                         linewidths=1, edgecolors='black', alpha=alpha))
+node_list = []
+node_list_2 = []
+
+def sz_points_to_xyz_points(sz_points, path):
+    """Convert a list of points in the sz grid back to 3D coordinates using the original path"""
+    nodes = path[-1].curve_segments
+
+    xyz_points = []
+
+    # Get the nodes in the curve segments
+    nodes_x = []
+    nodes_y = []
+    nodes_z = []
+
+    for segment in nodes:
+        for pt in segment:
+            nodes_x.append(pt[0])
+            nodes_y.append(pt[1])
+            nodes_z.append(pt[2])
+    
+    for sz_pt in sz_points:
+        s = sz_pt[0]
+        z = sz_pt[1]
+
+        # Find corresponding x,y in the original path based on arc length s
+        accumulated_length = 0.0
+        for i in range(len(nodes_x) - 1):
+            x1, y1, z1 = nodes_x[i], nodes_y[i], nodes_z[i]
+            x2, y2, z2 = nodes_x[i+1], nodes_y[i+1], nodes_z[i+1]
+            
+            dist_3d_pts = dist_3d(x1, y1, z1, x2, y2, z2)
+            if accumulated_length + dist_3d_pts >= s:
+                # Interpolate to find exact point
+                ratio = (s - accumulated_length) / dist_3d_pts
+                x_interp = x1 + ratio * (x2 - x1)
+                y_interp = y1 + ratio * (y2 - y1)
+                xyz_points.append((x_interp, y_interp, z))
+                break
+            accumulated_length += dist_3d_pts
+    return xyz_points
+
+def generate_sz_grid(grid, path):
+    """Generate a 2D slice of the 3D grid for Dubins path checking. s is arc length, z is height."""
+    nodes = path[-1].curve_segments
+    arc_length = 0.0
+
+    sz_grid = np.zeros((4000, grid.shape[2], 1))
+
+    # Assume no obstacles so we aren't blocked by obstacles if the arc length between points exceeds 1
+    sz_grid.fill(255)
+
+    nodes_x = []
+    nodes_y = []
+    nodes_z = []
+
+    # Get the nodes in the curve segments
+    for segment in nodes:
+        for pt in segment:
+            nodes_x.append(pt[0])
+            nodes_y.append(pt[1])
+            nodes_z.append(pt[2])
+    
+    for i in range(len(nodes_x) - 1):
+        x1, y1, z1 = nodes_x[i], nodes_y[i], nodes_z[i]
+
+        # Check for obstacles above and below this point in the 3D grid and mark that in the sz grid
+        hz = grid.shape[2]
+        for z in range(hz):
+            if grid[round(x1), round(y1), z] < 230: 
+                sz_grid[round(arc_length), z, 0] = 0
+        
+        x2, y2, z2 = nodes_x[i+1], nodes_y[i+1], nodes_z[i+1]
+        
+        # Calculate distance between points
+        dist_3d_pts = dist_3d(x1, y1, z1, x2, y2, z2)
+        arc_length += dist_3d_pts
+    
+    return sz_grid, arc_length
 
 # ============================================================================
 # MAIN
 # ============================================================================
 
-node_list = []
 j = 1
+mode = 1
+xyz_points = []
 
 # Set initial camera position, target, and up vector
 # camera_position = [[275, -100, -100], [19, 150, 270], [0, 0, 1]]
 
 def handle_timer(event, end):
     global j
+    global mode
+    global node_list
+    global node_list_2
+    global xyz_points
 
-    if j <= len(node_list) - 1:
-        plotter.add(vedo.Points([ (node_list[j].x, node_list[j].y, node_list[j].z) ], c='blue', r=4))
+    if mode == 1:
+
+        if j <= len(node_list) - 1:
+            plotter.add(vedo.Points([ (node_list[j].x, node_list[j].y, node_list[j].z) ], c='blue', r=4))
+        
+        if j == len(node_list) - 1:
+            nodes_x = []
+            nodes_y = []
+            nodes_z = []
+            
+            nodes = node_list[len(node_list) - 1].curve_segments
+            for segment in nodes:
+                for pt in segment:
+                    nodes_x.append(pt[0])
+                    nodes_y.append(pt[1])
+                    nodes_z.append(pt[2])
+            
+            # nodes_x.append(points[i+1][0])
+            # nodes_y.append(points[i+1][1])
+            # nodes_z.append(points[i+1][2])
+
+            #plotter.add(vedo.Line(list(zip(nodes_x, nodes_y, nodes_z)), c='orange', lw=2))
+
+            mode = 2
+
+            # Convert the format of the 2nd set of RRT points
+            nodes_x = []
+            nodes_y = []
+            nodes_z = []
+            
+            nodes = node_list_2
+            for pt in nodes:
+                nodes_x.append(pt.x)
+                nodes_y.append(pt.y)
+                nodes_z.append(pt.z)
+
+            # Convert the formatted the 2nd set of RRT points to xyz coords for plotting
+            xyz_points = sz_points_to_xyz_points(list(zip(nodes_x, nodes_y, nodes_z)), node_list)
+            
+            j = 0  # Reset j for next mode
     
-    if j == len(node_list) - 1:
+    elif mode == 2:
+
+        """ if j <= len(xyz_points) - 1:
+            plotter.add(vedo.Points([ (xyz_points[j][0], xyz_points[j][1], xyz_points[j][2]) ], c='purple', r=4))
+        
+        if j == len(xyz_points) - 1: """
         nodes_x = []
         nodes_y = []
         nodes_z = []
 
-        nodes = node_list[len(node_list) - 1].curve_segments
+        # Convert sz curve segments back to xyz points for plotting
+        nodes = node_list_2[len(xyz_points) - 1].curve_segments
+
         for segment in nodes:
             for pt in segment:
                 nodes_x.append(pt[0])
                 nodes_y.append(pt[1])
                 nodes_z.append(pt[2])
         
-        # nodes_x.append(points[i+1][0])
-        # nodes_y.append(points[i+1][1])
-        # nodes_z.append(points[i+1][2])
+        xyz_points = sz_points_to_xyz_points(list(zip(nodes_x, nodes_y, nodes_z)), node_list)
 
-        plotter.add(vedo.Line(list(zip(nodes_x, nodes_y, nodes_z)), c='orange', lw=2))
-        
+        nodes_x = []
+        nodes_y = []
+        nodes_z = []
+
+        for pt in xyz_points:
+            nodes_x.append(pt[0])
+            nodes_y.append(pt[1])
+            nodes_z.append(pt[2])
+
+        plotter.add(vedo.Line(list(zip(nodes_x, nodes_y, nodes_z)), c='lime', lw=2))
         plotter.remove_callback("timer")
         
     j += 1
@@ -550,7 +684,6 @@ def handle_mouse(event, txt):
     pt2d = event.picked2d
     pt3d = plotter.at(i).compute_world_coordinate(pt2d, objs=plotter.get_meshes())
     txt.text(f'2D coords: {pt2d}\n3D coords: {pt3d}\n')
-    print(f'2D coords: {pt2d}, 3D coords: {pt3d}')
     plotter.add(txt)
 
 if __name__ == '__main__':
@@ -559,21 +692,25 @@ if __name__ == '__main__':
     print("="*60)
     
     grid = np.array(generate3DArray())
+    grid = grid[:, 170:300, 170:350]  # Focus on a slice of the grid
     generateSTL(grid)
     
     # Define start and end with headings (in radians)
-    start = [19, 150, 242, np.pi/4]  # [x, y, z, heading]
-    end = [45, 370, 242, np.pi/4]  # heading toward northeast
-    
-    stepSize = 10
-    dubins_radius = 8.0  # Minimum turning radius
+    start = [35, 192 - 170, 242 - 170, 0.0]
+    end = [45, 280 - 170, 200 - 170, np.pi / 4]
+    stepSize = 2  # Change the step size
+    dubins_radius = 2.0  # Radius of the Dubins path
     
     node_list = []
     
     plotter = vedo.Plotter(axes=1)
 
+    plotter.camera.SetPosition(200, 200, 200)
+    plotter.camera.SetFocalPoint(35, 220, 220)
+    plotter.camera.SetViewUp(0, 0, 1)
+
     mesh = vedo.load("mesh/mesh_1.stl")
-    mesh.alpha(1) # transparency
+    mesh.alpha(0.3) # transparency
     plotter.add(mesh)
     plotter.add(vedo.Points([ (start[0], start[1], start[2]) ], c='green', r=8))
     plotter.add(vedo.Points([ (end[0], end[1], end[2]) ], c='red', r=8))
@@ -586,6 +723,12 @@ if __name__ == '__main__':
     
     # Run RRT with Dubins
     pathFound, node_list = RRT_Dubins(grid, start, end, stepSize, dubins_radius, None)
+
+    # Run Dubins on the sz grid to smooth the curvature in the z direction
+    sz_grid, arc_length = generate_sz_grid(grid, node_list)
+    sz_start = [0, start[2], 0, 0]
+    sz_end = [arc_length, end[2], 0, 0]
+    sz_dubins_planner, node_list_2 = RRT_Dubins(sz_grid, sz_start, sz_end, stepSize, dubins_radius, None)
     
     start_time = time.time()
     
