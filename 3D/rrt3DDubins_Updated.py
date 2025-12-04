@@ -12,11 +12,17 @@ from generate3D import generate3DArray, generateSTL
 
 
 # -----------------------------------------
-# DUBINS PATH PLANNER (2D) - Simplified RRT
+# PROPER DUBINS PATH PLANNER (2D)
 # -----------------------------------------
 
+def ortho(vect2d):
+    """Computes an orthogonal vector to the one given"""
+    return np.array((-vect2d[1], vect2d[0]))
+
+
 def dist(pt_a, pt_b):
-    return math.sqrt((pt_a[0] - pt_b[0]) ** 2 + (pt_a[1] - pt_b[1]) ** 2)
+    """Euclidian distance between two (x, y) points"""
+    return ((pt_a[0] - pt_b[0]) ** 2 + (pt_a[1] - pt_b[1]) ** 2) ** .5
 
 
 def mod2pi(theta):
@@ -29,64 +35,178 @@ def mod2pi(theta):
 
 
 class Dubins:
-    """2D Dubins path planner with turning radius constraint"""
+    """Proper Dubins path planner with constant turn radius"""
 
     def __init__(self, radius, point_separation):
         assert radius > 0 and point_separation > 0
         self.radius = radius
         self.point_separation = point_separation
 
-    def dubins_path(self, start, end):
-        """
-        Generate Dubins-inspired curved path
-        Uses smooth arcs that respect turning radius
-        """
-        x0, y0, theta0 = start
-        x1, y1, theta1 = end
+    def find_center(self, point, side):
+        """Find center of turn circle"""
+        assert side in 'LR'
+        angle = point[2] + (np.pi / 2 if side == 'L' else -np.pi / 2)
+        return np.array((point[0] + np.cos(angle) * self.radius,
+                         point[1] + np.sin(angle) * self.radius))
 
-        dx = x1 - x0
-        dy = y1 - y0
-        D = math.sqrt(dx ** 2 + dy ** 2)
+    def lsl(self, start, end, center_0, center_2):
+        """Left-Straight-Left"""
+        straight_dist = dist(center_0, center_2)
+        alpha = np.arctan2((center_2 - center_0)[1], (center_2 - center_0)[0])
+        beta_2 = (end[2] - alpha) % (2 * np.pi)
+        beta_0 = (alpha - start[2]) % (2 * np.pi)
+        total_len = self.radius * (beta_2 + beta_0) + straight_dist
+        return (total_len, (beta_0, beta_2, straight_dist), True)
 
-        if D < 0.1:
-            return np.array([[x0, y0], [x1, y1]])
+    def rsr(self, start, end, center_0, center_2):
+        """Right-Straight-Right"""
+        straight_dist = dist(center_0, center_2)
+        alpha = np.arctan2((center_2 - center_0)[1], (center_2 - center_0)[0])
+        beta_2 = (-end[2] + alpha) % (2 * np.pi)
+        beta_0 = (-alpha + start[2]) % (2 * np.pi)
+        total_len = self.radius * (beta_2 + beta_0) + straight_dist
+        return (total_len, (-beta_0, -beta_2, straight_dist), True)
 
-        # Target angle
-        theta_direct = math.atan2(dy, dx)
+    def rsl(self, start, end, center_0, center_2):
+        """Right-Straight-Left"""
+        median_point = (center_2 - center_0) / 2
+        psia = np.arctan2(median_point[1], median_point[0])
+        half_intercenter = np.linalg.norm(median_point)
+        if half_intercenter < self.radius:
+            return (float('inf'), (0, 0, 0), True)
+        alpha = np.arccos(self.radius / half_intercenter)
+        beta_0 = -(psia + alpha - start[2] - np.pi / 2) % (2 * np.pi)
+        beta_2 = (np.pi + end[2] - np.pi / 2 - alpha - psia) % (2 * np.pi)
+        straight_dist = 2 * (half_intercenter ** 2 - self.radius ** 2) ** .5
+        total_len = self.radius * (beta_2 + beta_0) + straight_dist
+        return (total_len, (-beta_0, beta_2, straight_dist), True)
 
-        # Angle differences
-        alpha_start = mod2pi(theta_direct - theta0)
-        alpha_end = mod2pi(theta1 - theta_direct)
+    def lsr(self, start, end, center_0, center_2):
+        """Left-Straight-Right"""
+        median_point = (center_2 - center_0) / 2
+        psia = np.arctan2(median_point[1], median_point[0])
+        half_intercenter = np.linalg.norm(median_point)
+        if half_intercenter < self.radius:
+            return (float('inf'), (0, 0, 0), True)
+        alpha = np.arccos(self.radius / half_intercenter)
+        beta_0 = (psia - alpha - start[2] + np.pi / 2) % (2 * np.pi)
+        beta_2 = (.5 * np.pi - end[2] - alpha + psia) % (2 * np.pi)
+        straight_dist = 2 * (half_intercenter ** 2 - self.radius ** 2) ** .5
+        total_len = self.radius * (beta_2 + beta_0) + straight_dist
+        return (total_len, (beta_0, -beta_2, straight_dist), True)
+
+    def lrl(self, start, end, center_0, center_2):
+        """Left-Right-Left"""
+        dist_intercenter = dist(center_0, center_2)
+        intercenter = (center_2 - center_0) / 2
+        psia = np.arctan2(intercenter[1], intercenter[0])
+        if dist_intercenter < 2 * self.radius or dist_intercenter > 4 * self.radius:
+            return (float('inf'), (0, 0, 0), False)
+        gamma = 2 * np.arcsin(dist_intercenter / (4 * self.radius))
+        beta_0 = (psia - start[2] + np.pi / 2 + (np.pi - gamma) / 2) % (2 * np.pi)
+        beta_1 = (-psia + np.pi / 2 + end[2] + (np.pi - gamma) / 2) % (2 * np.pi)
+        total_len = (2 * np.pi - gamma + abs(beta_0) + abs(beta_1)) * self.radius
+        return (total_len, (beta_0, beta_1, 2 * np.pi - gamma), False)
+
+    def rlr(self, start, end, center_0, center_2):
+        """Right-Left-Right"""
+        dist_intercenter = dist(center_0, center_2)
+        intercenter = (center_2 - center_0) / 2
+        psia = np.arctan2(intercenter[1], intercenter[0])
+        if dist_intercenter < 2 * self.radius or dist_intercenter > 4 * self.radius:
+            return (float('inf'), (0, 0, 0), False)
+        gamma = 2 * np.arcsin(dist_intercenter / (4 * self.radius))
+        beta_0 = -((-psia + (start[2] + np.pi / 2) + (np.pi - gamma) / 2) % (2 * np.pi))
+        beta_1 = -((psia + np.pi / 2 - end[2] + (np.pi - gamma) / 2) % (2 * np.pi))
+        total_len = (2 * np.pi - gamma + abs(beta_0) + abs(beta_1)) * self.radius
+        return (total_len, (beta_0, beta_1, 2 * np.pi - gamma), False)
+
+    def circle_arc(self, reference, beta, center, x):
+        """Point on circle arc"""
+        angle = reference[2] + ((x / self.radius) - np.pi / 2) * np.sign(beta)
+        vect = np.array([np.cos(angle), np.sin(angle)])
+        return center + self.radius * vect
+
+    def generate_points_straight(self, start, end, path):
+        """Generate points for LSL, RSR, LSR, RSL paths"""
+        total = self.radius * (abs(path[1]) + abs(path[0])) + path[2]
+        center_0 = self.find_center(start, 'L' if path[0] > 0 else 'R')
+        center_2 = self.find_center(end, 'L' if path[1] > 0 else 'R')
+
+        # Find straight segment endpoints
+        if abs(path[0]) > 0:
+            angle = start[2] + (abs(path[0]) - np.pi / 2) * np.sign(path[0])
+            ini = center_0 + self.radius * np.array([np.cos(angle), np.sin(angle)])
+        else:
+            ini = np.array(start[:2])
+
+        if abs(path[1]) > 0:
+            angle = end[2] + (-abs(path[1]) - np.pi / 2) * np.sign(path[1])
+            fin = center_2 + self.radius * np.array([np.cos(angle), np.sin(angle)])
+        else:
+            fin = np.array(end[:2])
+
+        dist_straight = dist(ini, fin)
+
+        # Generate points
+        points = []
+        for x in np.arange(0, total, self.point_separation):
+            if x < abs(path[0]) * self.radius:  # First turn
+                points.append(self.circle_arc(start, path[0], center_0, x))
+            elif x > total - abs(path[1]) * self.radius:  # Last turn
+                points.append(self.circle_arc(end, path[1], center_2, x - total))
+            else:  # Straight segment
+                coeff = (x - abs(path[0]) * self.radius) / dist_straight
+                points.append(coeff * fin + (1 - coeff) * ini)
+        points.append(end[:2])
+        return np.array(points)
+
+    def generate_points_curve(self, start, end, path):
+        total = self.radius * (abs(path[1]) + abs(path[0]) + abs(path[2]))
+        center_0 = self.find_center(start, 'L' if path[0] > 0 else 'R')
+        center_2 = self.find_center(end, 'L' if path[1] > 0 else 'R')
+        intercenter = dist(center_0, center_2)
+        center_1 = (center_0 + center_2) / 2 + \
+                   np.sign(path[0]) * ortho((center_2 - center_0) / intercenter) \
+                   * (4 * self.radius ** 2 - (intercenter / 2) ** 2) ** .5
+        psi_0 = np.arctan2((center_1 - center_0)[1],
+                           (center_1 - center_0)[0]) - np.pi
 
         points = []
-
-        # Calculate number of points for smooth curve
-        num_points = max(5, int(D / self.point_separation))
-
-        # Generate smooth path with turning constraints
-        for i in range(num_points + 1):
-            t = i / num_points
-
-            # Smooth heading transition
-            heading = theta0 + t * (mod2pi(theta1 - theta0))
-
-            # Position with curved trajectory
-            # Apply turning radius constraint through arc interpolation
-            turn_factor = min(1.0, D / (2 * self.radius))
-
-            # Cubic interpolation for smooth position
-            t_cubic = 3 * t * t - 2 * t * t * t
-
-            # Add curvature based on heading changes
-            curve_offset_x = self.radius * math.sin(heading - theta0) * (1 - t) * turn_factor
-            curve_offset_y = -self.radius * math.cos(heading - theta0) * (1 - t) * turn_factor
-
-            x = x0 + t_cubic * dx + curve_offset_x * 0.3
-            y = y0 + t_cubic * dy + curve_offset_y * 0.3
-
-            points.append([x, y])
-
+        for x in np.arange(0, total, self.point_separation):
+            if x < abs(path[0]) * self.radius:  # First turn
+                points.append(self.circle_arc(start, path[0], center_0, x))
+            elif x > total - abs(path[1]) * self.radius:  # Last turn
+                points.append(self.circle_arc(end, path[1], center_2, x - total))
+            else:  # Middle turn
+                angle = psi_0 - np.sign(path[0]) * (x / self.radius - abs(path[0]))
+                vect = np.array([np.cos(angle), np.sin(angle)])
+                points.append(center_1 + self.radius * vect)
+        points.append(end[:2])
         return np.array(points)
+
+    def dubins_path(self, start, end):
+        """Compute shortest Dubins path"""
+        center_0_left = self.find_center(start, 'L')
+        center_0_right = self.find_center(start, 'R')
+        center_2_left = self.find_center(end, 'L')
+        center_2_right = self.find_center(end, 'R')
+
+        options = [
+            self.lsl(start, end, center_0_left, center_2_left),
+            self.rsr(start, end, center_0_right, center_2_right),
+            self.rsl(start, end, center_0_right, center_2_left),
+            self.lsr(start, end, center_0_left, center_2_right),
+            self.rlr(start, end, center_0_right, center_2_right),
+            self.lrl(start, end, center_0_left, center_2_left)
+        ]
+
+        dubins_path, straight = min(options, key=lambda x: x[0])[1:]
+
+        if straight:
+            return self.generate_points_straight(start, end, dubins_path)
+        else:
+            return self.generate_points_curve(start, end, dubins_path)
 
 
 # ------------------------------
@@ -102,7 +222,8 @@ class Nodes:
         self.parent_x = []
         self.parent_y = []
         self.parent_z = []
-        self.parent_index = None  # Track parent for tree structure
+        self.parent_index = None
+        self.curve_to_parent = None  # Store the smooth Dubins curve to parent
 
 
 def dist_3d(x1, y1, z1, x2, y2, z2):
@@ -113,20 +234,9 @@ def check_collision_dubins(x1, y1, z1, heading1,
                            x2, y2, z2, heading2,
                            img, stepSize, end, dubins_planner):
     """
-    Check collision along Dubins path from (x2,y2,z2) to (x1,y1,z1)
-    WITH REASONABLE DUBINS CONSTRAINTS
-    Returns: (tx, ty, tz, new_heading, directCon, nodeCon, curve_3d)
+    Check collision along Dubins path from parent (x2,y2,z2) to target (x1,y1,z1)
     """
-    start_2d = (x2, y2, heading2)
-    end_2d = (x1, y1, heading1)
-
-    # Calculate Dubins path
-    dubins_points = dubins_planner.dubins_path(start_2d, end_2d)
-
-    if len(dubins_points) < 2:
-        return x2, y2, z2, heading2, False, False, None
-
-    # DUBINS CHECK: Verify heading compatibility (relaxed)
+    # Calculate direction from parent to target
     dx = x1 - x2
     dy = y1 - y2
     distance_2d = math.sqrt(dx * dx + dy * dy)
@@ -134,13 +244,19 @@ def check_collision_dubins(x1, y1, z1, heading1,
     if distance_2d < 0.1:
         return x2, y2, z2, heading2, False, False, None
 
-    heading_change = abs(mod2pi(heading1 - heading2))
+    target_heading = math.atan2(dy, dx)
 
-    # Minimum distance needed 
-    min_distance_needed = heading_change * dubins_planner.radius * 0.3  
+    # Use parent's heading as start, target direction as end
+    start_2d = (x2, y2, heading2)
+    end_2d = (x1, y1, target_heading)
 
-    # Reject for extreme turns
-    if distance_2d < min_distance_needed and heading_change > np.pi / 2:
+    # Calculate proper Dubins path
+    try:
+        dubins_points = dubins_planner.dubins_path(start_2d, end_2d)
+    except:
+        return x2, y2, z2, heading2, False, False, None
+
+    if len(dubins_points) < 2:
         return x2, y2, z2, heading2, False, False, None
 
     # Calculate path length
@@ -169,19 +285,27 @@ def check_collision_dubins(x1, y1, z1, heading1,
     num_points = len(dubins_points)
     z_values = np.linspace(z2, z2 + z_diff * min(1.0, total_length / stepSize if total_length > 0 else 1.0), num_points)
 
-    # Create 3D curve
+    # Create 3D curve - ensure it starts at parent position
     curve_3d = [(float(dubins_points[i][0]), float(dubins_points[i][1]), float(z_values[i]))
                 for i in range(num_points)]
 
+    # Force first point to be exactly at parent
+    if len(curve_3d) > 0:
+        curve_3d[0] = (float(x2), float(y2), float(z2))
+
     tx, ty, tz = curve_3d[-1]
 
-    # Calculate heading from path direction
-    if len(dubins_points) >= 2:
-        dx = dubins_points[-1][0] - dubins_points[-2][0]
-        dy = dubins_points[-1][1] - dubins_points[-2][1]
-        new_heading = math.atan2(dy, dx)
+    # Calculate heading from the last two points of the actual curve
+    if len(curve_3d) >= 2:
+        dx_curve = curve_3d[-1][0] - curve_3d[-2][0]
+        dy_curve = curve_3d[-1][1] - curve_3d[-2][1]
+        new_heading = math.atan2(dy_curve, dx_curve)
+    elif len(dubins_points) >= 2:
+        dx_curve = dubins_points[-1][0] - dubins_points[-2][0]
+        dy_curve = dubins_points[-1][1] - dubins_points[-2][1]
+        new_heading = math.atan2(dy_curve, dx_curve)
     else:
-        new_heading = heading2
+        new_heading = target_heading
 
     hx, hy, hz = img.shape
 
@@ -190,7 +314,7 @@ def check_collision_dubins(x1, y1, z1, heading1,
 
     obstacleThreshold = 230
 
-    # Dense collision checking
+    # Collision checking
     for i in range(len(dubins_points)):
         xi, yi, zi = int(dubins_points[i][0]), int(dubins_points[i][1]), int(z_values[i])
 
@@ -200,7 +324,7 @@ def check_collision_dubins(x1, y1, z1, heading1,
         if img[xi, yi, zi] < obstacleThreshold:
             return tx, ty, tz, new_heading, False, False, None
 
-    # Check between points with fine sampling
+    # Check between points
     for i in range(len(dubins_points) - 1):
         x_start, y_start = dubins_points[i]
         x_end, y_end = dubins_points[i + 1]
@@ -234,11 +358,8 @@ def nearest_node(x, y, z, node_list):
 
 
 def rnd_point(hx, hy, hz, start=None, end=None, bias_region=True):
-    """
-    Generate random point with optional biasing toward start-goal region
-    """
+    """Generate random point with optional biasing"""
     if bias_region and start is not None and end is not None:
-        # Sample within an expanded bounding box around start and goal
         min_x = max(0, min(start[0], end[0]) - 20)
         max_x = min(hx - 1, max(start[0], end[0]) + 20)
         min_y = max(0, min(start[1], end[1]) - 20)
@@ -256,9 +377,7 @@ def rnd_point(hx, hy, hz, start=None, end=None, bias_region=True):
 
 
 def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
-    """
-    Run RRT with Dubins constraints - proper tree exploration
-    """
+    """Run RRT with proper Dubins constraints"""
     hx, hy, hz = img.shape
     print(f"Grid shape: {hx} x {hy} x {hz}")
 
@@ -276,22 +395,18 @@ def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
     i = 1
     iteration = 0
 
-    # Store edges for tree visualization
     tree_edges = []
 
     while not pathFound and iteration < max_iterations:
         iteration += 1
 
-        # Goal Bias, needed for stl area
+        # Goal Bias
         rand_val = random.random()
         if rand_val < 0.1:
-            # 10% - Sample exact goal
             nx, ny, nz, n_heading = end[0], end[1], end[2], end[3]
         elif rand_val < 0.7:
-            # 60% - Sample in region between start and goal (focused exploration)
             nx, ny, nz, n_heading = rnd_point(hx, hy, hz, start, end, bias_region=True)
         else:
-            # 30% - Sample anywhere (broad exploration)
             nx, ny, nz, n_heading = rnd_point(hx, hy, hz, bias_region=False)
 
         if iteration % 100 == 0:
@@ -307,9 +422,9 @@ def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
         )
 
         if nodeCon:
-            # Add new node
             new_node = Nodes(tx, ty, tz, t_heading)
             new_node.parent_index = nearestIndex
+            new_node.curve_to_parent = curve_3d  # Store smooth curve
             new_node.parent_x = nearest_node_obj.parent_x.copy()
             new_node.parent_y = nearest_node_obj.parent_y.copy()
             new_node.parent_z = nearest_node_obj.parent_z.copy()
@@ -339,33 +454,61 @@ def RRT_Dubins_Realtime(img, start, end, stepSize, dubins_radius, plotter):
                 print(f"\n✓ Path found after {iteration} iterations!")
                 print(f"  Tree explored {len(node_list)} nodes")
 
-                # Draw final connection
-                final_curve = dubins_planner.dubins_path(
+                # Final connection to goal
+                final_curve_2d = dubins_planner.dubins_path(
                     (tx, ty, t_heading),
                     (end[0], end[1], end[3])
                 )
 
                 z_start, z_end = tz, end[2]
                 final_3d = []
-                for i_pt, pt in enumerate(final_curve):
-                    t_z = i_pt / (len(final_curve) - 1) if len(final_curve) > 1 else 0
+                for i_pt in range(len(final_curve_2d)):
+                    t_z = i_pt / (len(final_curve_2d) - 1) if len(final_curve_2d) > 1 else 0
                     z_interp = z_start + t_z * (z_end - z_start)
-                    final_3d.append((pt[0], pt[1], z_interp))
+                    final_3d.append((final_curve_2d[i_pt][0], final_curve_2d[i_pt][1], z_interp))
 
-                # Extract and highlight solution path
-                solution_path = []
+                # Hide tree edges
+                print("\nHiding tree visualization...")
+                for edge in tree_edges:
+                    plotter.remove(edge)
+
+                # Reconstruct solution path
+                print("\n=== Reconstructing Solution Path ===")
+                path_segments = []
                 current_idx = len(node_list) - 1
 
                 while current_idx != 0:
                     node = node_list[current_idx]
-                    solution_path.append((node.x, node.y, node.z))
+                    if node.curve_to_parent:
+                        path_segments.append(list(node.curve_to_parent))
+                    else:
+                        path_segments.append([(node.x, node.y, node.z)])
                     current_idx = node.parent_index
 
-                solution_path.append((start[0], start[1], start[2]))
-                solution_path.reverse()
+                path_segments.reverse()
+
+                # Build continuous path
+                solution_path = []
+                for i, segment in enumerate(path_segments):
+                    if i == 0:
+                        solution_path.extend(segment)
+                    else:
+                        if len(solution_path) > 0 and len(segment) > 0:
+                            last_pt = solution_path[-1]
+                            first_seg_pt = segment[0]
+                            dist = math.sqrt((last_pt[0] - first_seg_pt[0]) ** 2 +
+                                             (last_pt[1] - first_seg_pt[1]) ** 2 +
+                                             (last_pt[2] - first_seg_pt[2]) ** 2)
+                            if dist < 0.5:
+                                solution_path.extend(segment[1:])
+                            else:
+                                solution_path.extend(segment)
+                        else:
+                            solution_path.extend(segment)
+
                 solution_path.extend(final_3d)
 
-                # Draw RED solution path
+                # Draw solution path
                 solution_array = np.array(solution_path)
                 plotter.add(vedo.Tube(solution_array, c='red', r=3))
                 plotter.add(vedo.Line(solution_array, c='yellow', lw=3))
@@ -392,8 +535,8 @@ if __name__ == '__main__':
 
     start = [35, 192, 242, 0.0]
     end = [45, 280, 200, np.pi / 4]
-    stepSize = 10  # Change the step size
-    dubins_radius = 15.0  # Radius of the Dubins path
+    stepSize = 8
+    dubins_radius = 10.0
 
     print(f"\nStart: {start}")
     print(f"End: {end}")
@@ -405,7 +548,7 @@ if __name__ == '__main__':
     plotter = vedo.Plotter(axes=1)
 
     mesh = vedo.load("mesh/mesh_1.stl")
-    mesh.alpha(0.15)  # Alpha slt value, CHANGE TO SEE INSIDE PATH
+    mesh.alpha(0.15)
     plotter.add(mesh)
 
     plotter.add(vedo.Points([start[:3]], c='green', r=10))
@@ -417,12 +560,11 @@ if __name__ == '__main__':
 
     plotter.show(interactive=False)
 
-    print("Running RRT with Dubins constraints")
+    print("Running RRT with proper Dubins constraints")
     pathFound, node_list = RRT_Dubins_Realtime(grid, start, end, stepSize, dubins_radius, plotter)
 
     if pathFound:
         print("\n Solution Path shown in RED")
-
     else:
         print("Failed to find path")
 
